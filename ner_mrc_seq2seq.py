@@ -4,7 +4,7 @@
 """
 基础的序列标注的方式
 top2: 0.8964039785768968 0.9173191356091476 0.8764213046080228
-top1: 
+top1: 0.896530643435736 0.9162761636988467 0.8776181926989863
 """
 
 from bert4keras.tokenizers import load_vocab, Tokenizer
@@ -177,8 +177,8 @@ class Evaluator(keras.callbacks.Callback):
     """评估和保存模型"""
 
     def __init__(self):
-        self.lowest = 1e10
-
+        self.best_f1 = 1e-10
+        self.f1 = []
     def on_epoch_end(self, epoch, logs=None):
         f1, p, r = evaluate(valid_data)
 
@@ -186,22 +186,16 @@ class Evaluator(keras.callbacks.Callback):
             'valid:  f1: %.5f, precision: %.5f, recall: %.5f\n' %
             (f1, p, r)
         )
-        print(aotu_answer.generate(text='海钓地点在金门与厦门之间的海域进行。'))
-        if logs['loss'] < self.lowest:
-            self.lowest = logs['loss']
+        if f1 > self.best_f1:
+            self.best_f1 = f1
+            self.f1.append(f1)
+            print(self.f1)
             model.save(model_path)
 
 
 if __name__ == '__main__':
-    # 训练T = set([tuple(i) for i in d if i[1] != 'O'])
-    # train_D = MyDataGenerator(train_data, batch_size)
-    # evalutor = Evaluator()
-    #
-    # model.fit_generator(train_D.forfit(), epochs=10, steps_per_epoch=len(train_D), callbacks=[evalutor])
-    # model.save_weights(model_path)
+    # 训练
+    train_D = MyDataGenerator(train_data, batch_size)
+    evalutor = Evaluator()
 
-    model.load_weights(model_path)
-
-    # evaluate(valid_data)
-    text = '海钓地点在金门与厦门之间的海域进行。'
-    print(aotu_answer.generate(text))
+    model.fit_generator(train_D.forfit(), epochs=10, steps_per_epoch=len(train_D), callbacks=[evalutor])

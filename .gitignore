@@ -130,9 +130,8 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-t.py
+ner_basci.py
 tt.py
 ner_basic.py
-ner_seq2seq.py
 data_tools.py
 models/

@@ -3,6 +3,8 @@
 
 """
 基础的序列标注的方式
+top2: 0.8964039785768968 0.9173191356091476 0.8764213046080228
+top1: 
 """
 
 from bert4keras.tokenizers import load_vocab, Tokenizer
@@ -12,17 +14,18 @@ from keras.optimizers import Adam
 import keras.backend as K
 import keras
 import json
-from collections import defaultdict
+from tqdm import tqdm
 import numpy as np
 
 config_path = '/home/chenbing/pretrain_models/bert/chinese_L-12_H-768_A-12/bert_config.json'
 checkpoint_path = '/home/chenbing/pretrain_models/bert/chinese_L-12_H-768_A-12/bert_model.ckpt'
 vocab_path = '/home/chenbing/pretrain_models/bert/chinese_L-12_H-768_A-12/vocab.txt'
 
-batch_size = 16
+batch_size = 32
 max_len = 256
 
-model_path = 'best_ner_mrc.h5'
+model_path = 'models/best_ner_mrc.h5'
+
 
 def load_data(filename):
     D = []
@@ -48,8 +51,8 @@ def load_data(filename):
 
 
 # 加载数据
-train_data = load_data('data/china-people-daily-ner-corpus/example.train')[:200]
-valid_data = load_data('data/china-people-daily-ner-corpus/example.dev')[:100]
+train_data = load_data('data/china-people-daily-ner-corpus/example.train')
+valid_data = load_data('data/china-people-daily-ner-corpus/example.dev')
 test_data = load_data('data/china-people-daily-ner-corpus/example.test')
 
 # query 映射
@@ -86,7 +89,7 @@ class MyDataGenerator(DataGenerator):
                 for w, l in item:
                     w_token_ids = tokenizer.encode(w)[0][1:-1]
                     if l == k:
-                        entity_ids.extend(w_token_ids + [tokenizer.token_to_id('#')])
+                        entity_ids.extend(w_token_ids + [tokenizer.token_to_id('@')])
                     if len(token_ids) + len(w_token_ids) + len(entity_ids) < max_len:
                         token_ids += w_token_ids
                     else:
@@ -127,18 +130,6 @@ model.compile(optimizer=Adam(learning_rate=1e-5))
 model.summary()
 
 
-class Evaluator(keras.callbacks.Callback):
-    """评估和保存模型"""
-
-    def __init__(self):
-        self.lowest = 1e10
-
-    def on_epoch_end(self, epoch, logs=None):
-        if logs['loss'] < self.lowest:
-            self.lowest = logs['loss']
-            model.save(model_path)
-
-
 class AutoAnswer(AutoRegressiveDecoder):
     @AutoRegressiveDecoder.set_rtype('probas')
     def predict(self, inputs, output_ids, step):
@@ -151,27 +142,66 @@ class AutoAnswer(AutoRegressiveDecoder):
     def generate(self, text, topk=1):
         result = set()
         for k, v in query_mapping.items():
-            token_ids, segment_ids = tokenizer.encode(first_text=v, second_text=text)
+            token_ids, _ = tokenizer.encode(first_text=v, second_text=text)
+            segment_ids = [0] * len(token_ids)
             output_ids = self.beam_search([token_ids, segment_ids], topk)
             entity_str = tokenizer.decode(output_ids)
-            entity = entity_str.split('#') if entity_str else []
+            entity = [item.strip() for item in entity_str.split('@')] if entity_str else []
             for item in entity:
-                result.add((item, k))
+                if item:
+                    result.add((item, k))
         return result
 
 
 aotu_answer = AutoAnswer(start_id=None, end_id=tokenizer._token_end_id, maxlen=64)
 
+
+def evaluate(data):
+    """评测函数
+    """
+    X, Y, Z = 1e-10, 1e-10, 1e-10
+    for d in tqdm(data):
+        text = ''.join([i[0] for i in d])
+        if len(text) > max_len:
+            continue
+        T = set([tuple(i) for i in d if i[1] != 'O'])
+        R = aotu_answer.generate(text)
+        X += len(R & T)
+        Y += len(R)
+        Z += len(T)
+    f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
+    return f1, precision, recall
+
+
+class Evaluator(keras.callbacks.Callback):
+    """评估和保存模型"""
+
+    def __init__(self):
+        self.lowest = 1e10
+
+    def on_epoch_end(self, epoch, logs=None):
+        f1, p, r = evaluate(valid_data)
+
+        print(
+            'valid:  f1: %.5f, precision: %.5f, recall: %.5f\n' %
+            (f1, p, r)
+        )
+        print(aotu_answer.generate(text='海钓地点在金门与厦门之间的海域进行。'))
+        if logs['loss'] < self.lowest:
+            self.lowest = logs['loss']
+            model.save(model_path)
+
+
 if __name__ == '__main__':
-    # 训练
+    # 训练T = set([tuple(i) for i in d if i[1] != 'O'])
     # train_D = MyDataGenerator(train_data, batch_size)
     # evalutor = Evaluator()
     #
-    # model.fit_generator(train_D.forfit(), epochs=10, steps_per_epoch=len(train_D))
+    # model.fit_generator(train_D.forfit(), epochs=10, steps_per_epoch=len(train_D), callbacks=[evalutor])
     # model.save_weights(model_path)
 
-    # predict
-    model.load_weights('best_ner_mrc.h5')
-    text = '海钓地点在金门与厦门之间的海域。'
-    result = aotu_answer.generate(text)
-    # print(result)
+    model.load_weights(model_path)
+
+    # evaluate(valid_data)
+    text = '海钓地点在金门与厦门之间的海域进行。'
+    print(aotu_answer.generate(text))
